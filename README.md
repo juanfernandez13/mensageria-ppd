@@ -156,7 +156,207 @@ Propriedades JMS anexadas:
 
 ---
 
-## 7. Observações para a apresentação
+## 7. Fluxo detalhado de execução
+
+### FASE 1 — Inicialização do Broker
+
+Tudo começa em `Launcher.main()`. O usuário clica em **"Iniciar broker embarcado"** → `iniciarBrokerEmbarcado()`:
+
+```
+iniciarBrokerEmbarcado()
+  ├── new BrokerService()                          cria o servidor ActiveMQ
+  ├── brokerEmbarcado.setPersistent(false)         sem salvar msgs em disco
+  ├── brokerEmbarcado.addConnector("tcp://...:61616")   abre a porta TCP
+  ├── brokerEmbarcado.start()                      broker em execução
+  └── brokerEmbarcado.waitUntilStarted()           espera estar pronto
+```
+
+A URL vem de `BrokerConfig.getConnectorUrl()` → `tcp://localhost:61616`.
+
+---
+
+### FASE 2 — Criação e Conexão do Sensor
+
+Usuário clica **"+ Novo Sensor"** → diálogo de configuração → `new Sensor(tipo, id, ...)`:
+
+```
+Sensor(tipo, id, valorInicial, min, max)
+  │
+  ├── topicName = BrokerConfig.buildTopicName(tipo, id)
+  │              → "sensor.temperatura.1"
+  │
+  ├── buildUI()                    monta a janela Swing
+  │
+  └── conectarBroker()
+        ├── new ActiveMQConnectionFactory(getBrokerUrl())
+        │   → URL com failover: "failover:(tcp://localhost:61616)"
+        ├── factory.createConnection()
+        ├── connection.setClientID("sensor-temp-1-...")
+        ├── connection.start()
+        ├── session = connection.createSession(AUTO_ACKNOWLEDGE)
+        │   → broker remove a msg automaticamente após a entrega
+        ├── topic = session.createTopic("sensor.temperatura.1")
+        │   → registra o tópico no broker
+        ├── producer = session.createProducer(topic)
+        └── producer.setDeliveryMode(NON_PERSISTENT)
+              → msgs não sobrevivem a reinício do broker
+```
+
+Logo após conectar, o Sensor chama `anunciarPresenca()` — publica uma mensagem `INFO` no tópico imediatamente.
+
+---
+
+### FASE 3 — Criação e Conexão do Cliente
+
+Usuário clica **"+ Novo Cliente"** → diálogo pede o nome → `new Cliente(nome)`:
+
+```
+Cliente(nomeCliente)
+  │
+  ├── buildUI()                    monta a janela Swing
+  │
+  ├── conectarBroker()
+  │     ├── new ActiveMQConnectionFactory(getBrokerUrl())
+  │     ├── factory.createConnection()  ← cast para ActiveMQConnection
+  │     │   (necessário para acessar DestinationSource na fase seguinte)
+  │     ├── connection.setClientID("cliente-X-...")
+  │     ├── connection.start()
+  │     └── session = connection.createSession(AUTO_ACKNOWLEDGE)
+  │
+  └── atualizarListaTopicos()      chamado automaticamente após conectar
+```
+
+---
+
+### FASE 4 — Como o Cliente descobre os tópicos
+
+Chamado automaticamente ao conectar e ao clicar **"Atualizar tópicos"**:
+
+```
+atualizarListaTopicos()
+  │
+  ├── DestinationSource ds = connection.getDestinationSource()
+  │   → API exclusiva do ActiveMQ: consulta o broker sobre
+  │     quais destinos (tópicos/filas) estão registrados
+  │
+  ├── Set<ActiveMQTopic> topicos = ds.getTopics()
+  │   → lista todos os tópicos do broker
+  │
+  ├── filtra apenas os que começam com "sensor."
+  │   → ignora tópicos internos do ActiveMQ
+  │
+  └── para cada nome encontrado:
+        cria um JCheckBox na tela
+        marca como [ASSINADO] se já há consumidor ativo
+```
+
+---
+
+### FASE 5 — Assinatura de um tópico
+
+Usuário marca os checkboxes e clica **"Assinar selecionados"** → `assinarSelecionados()`:
+
+```
+assinarSelecionados()
+  │
+  ├── percorre checkboxes: pega os marcados e ainda não assinados
+  │
+  └── para cada tópico selecionado:
+        ├── topic = session.createTopic(nome)
+        ├── consumer = session.createConsumer(topic)
+        │   → registra no broker: "quero receber msgs deste tópico"
+        ├── consumer.setMessageListener(this)
+        │   → o próprio Cliente implementa MessageListener
+        │     quando chegar uma msg, o broker chama onMessage()
+        │     automaticamente em thread separada
+        └── consumidores.put(nome, consumer)
+              → guarda referência para poder cancelar depois
+```
+
+---
+
+### FASE 6 — Sensor publica um alerta
+
+Usuário digita valor fora dos limites e clica **"Atualizar leitura"** → `atualizarLeitura()`:
+
+```
+atualizarLeitura()
+  ├── parse do valor digitado
+  ├── atualiza valorAtual e a label na UI
+  └── checarLimites(novo)
+        ├── valor < limiteMin  →  publicar("ALERTA_MIN", ...)
+        └── valor > limiteMax  →  publicar("ALERTA_MAX", ...)
+
+publicar(tag, descricao)
+  ├── monta payload:
+  │   "[ALERTA_MAX] 14:32 | sensor=temperatura | id=1 | valor=45C | ..."
+  ├── msg = session.createTextMessage(payload)
+  ├── msg.setStringProperty("tipo", tipo)
+  ├── msg.setIntProperty("id", id)
+  ├── msg.setDoubleProperty("valor", valorAtual)
+  ├── msg.setStringProperty("tag", tag)
+  └── producer.send(msg)
+        → entrega ao broker no tópico "sensor.temperatura.1"
+```
+
+---
+
+### FASE 7 — Cliente recebe a mensagem
+
+O broker entrega para todos os consumidores inscritos. O ActiveMQ chama `onMessage()` automaticamente:
+
+```
+onMessage(message)
+  │
+  ├── tipo  = message.getStringProperty("tipo")   → "temperatura"
+  ├── tag   = message.getStringProperty("tag")    → "ALERTA_MAX"
+  ├── id    = message.getIntProperty("id")        → 1
+  ├── valor = message.getDoubleProperty("valor")  → 45.0
+  ├── texto = ((TextMessage) message).getText()   → payload completo
+  │
+  └── exibe no log:
+        "MSG  Sensor=temperatura #1 | valor=45.0C | tag=ALERTA_MAX"
+        "         payload: [ALERTA_MAX] 14:32 ..."
+        totalMensagens++  →  atualiza contador na barra de status
+```
+
+---
+
+### Visão geral do fluxo completo
+
+```
+Launcher.main()
+  └── iniciarBrokerEmbarcado()           BROKER SOBE em tcp://localhost:61616
+
+  └── Sensor.abrirDialogoConfiguracao()
+        └── new Sensor(tipo, id, ...)
+              └── conectarBroker()
+                    ├── createConnection / start / createSession
+                    ├── createTopic("sensor.temperatura.1")  tópico nasce no broker
+                    └── createProducer(topic)
+
+  └── Cliente.abrirDialogoConfiguracao()
+        └── new Cliente(nome)
+              ├── conectarBroker()
+              │     └── createConnection (ActiveMQConnection) / start / createSession
+              └── atualizarListaTopicos()
+                    └── DestinationSource.getTopics() → filtra "sensor.*" → checkboxes
+
+[usuário marca checkbox e clica Assinar]
+  └── assinarSelecionados()
+        └── createConsumer(topic)
+              └── setMessageListener(this)   broker vai chamar onMessage()
+
+[usuário digita valor fora dos limites no Sensor]
+  └── atualizarLeitura()
+        └── checarLimites()
+              └── publicar()
+                    └── producer.send(msg)   BROKER   onMessage() no Cliente
+```
+
+---
+
+## 8. Observações para a apresentação
 
 * O projeto segue o mesmo estilo dos exemplos `Publisher.java` /
   `Subscriber.java` fornecidos (mesma API `javax.jms.*` + ActiveMQ).
