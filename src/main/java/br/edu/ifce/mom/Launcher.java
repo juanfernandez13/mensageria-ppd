@@ -36,6 +36,8 @@ public class Launcher extends JFrame {
     private JLabel lblStatusBroker;
     private JButton btnIniciarBroker;
     private JButton btnPararBroker;
+    private JButton btnSensor;
+    private JButton btnCliente;
 
     public Launcher() {
         super("Projeto MOM - Rede de Sensores IoT");
@@ -101,9 +103,11 @@ public class Launcher extends JFrame {
         JPanel cardAcoes = Tema.card("Instancias");
         JPanel pnlAcoes = new JPanel(new GridLayout(1, 3, 10, 0));
         pnlAcoes.setOpaque(false);
-        JButton btnSensor = Tema.botao("+ Novo Sensor", Tema.PRIMARIA);
+        btnSensor = Tema.botao("+ Novo Sensor", Tema.PRIMARIA);
+        btnSensor.setEnabled(false);
         btnSensor.addActionListener(e -> Sensor.abrirDialogoConfiguracao());
-        JButton btnCliente = Tema.botao("+ Novo Cliente", Tema.PRIMARIA);
+        btnCliente = Tema.botao("+ Novo Cliente", Tema.PRIMARIA);
+        btnCliente.setEnabled(false);
         btnCliente.addActionListener(e -> Cliente.abrirDialogoConfiguracao());
         JButton btnPing = Tema.botao("Testar conexao", Tema.CINZA);
         btnPing.addActionListener(e -> testarConexao());
@@ -158,6 +162,8 @@ public class Launcher extends JFrame {
             lblStatusBroker.setForeground(Tema.SUCESSO);
             btnIniciarBroker.setEnabled(false);
             btnPararBroker.setEnabled(true);
+            btnSensor.setEnabled(true);
+            btnCliente.setEnabled(true);
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this,
                     "Falha ao iniciar broker: " + ex.getMessage(),
@@ -176,6 +182,8 @@ public class Launcher extends JFrame {
             lblStatusBroker.setForeground(Tema.PERIGO);
             btnIniciarBroker.setEnabled(true);
             btnPararBroker.setEnabled(false);
+            btnSensor.setEnabled(false);
+            btnCliente.setEnabled(false);
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this,
                     "Falha ao parar broker: " + ex.getMessage(),
