@@ -273,11 +273,13 @@ public class Sensor extends JFrame {
     // Verificacao de limites + publicacao
     // -------------------------------------------------------------------------
 
-    /* Colore o valor exibido: verde dentro dos limites, vermelho fora. */
+    /* Colore o valor: verde dentro, laranja no limite exato, vermelho alem do limite. */
     private void atualizarCorValor() {
         if (lblValorAtual == null) return;
         if (valorAtual < limiteMin || valorAtual > limiteMax) {
             lblValorAtual.setForeground(Tema.PERIGO);
+        } else if (valorAtual == limiteMin || valorAtual == limiteMax) {
+            lblValorAtual.setForeground(Tema.ALERTA);
         } else {
             lblValorAtual.setForeground(Tema.SUCESSO);
         }
@@ -286,12 +288,18 @@ public class Sensor extends JFrame {
     private void checarLimites(double valor) {
         if (producer == null) return;
         try {
-            if (valor < limiteMin) {
+            if (valor == limiteMin) {
+                publicar("LIMITE_MIN", "Leitura " + formatar(valor) + unidade
+                        + " atingiu o limite minimo (" + formatar(limiteMin) + unidade + ")");
+            } else if (valor < limiteMin) {
                 publicar("ALERTA_MIN", "Leitura " + formatar(valor) + unidade
-                        + " abaixo do minimo (" + formatar(limiteMin) + unidade + ")");
+                        + " ultrapassou o limite minimo (" + formatar(limiteMin) + unidade + ")");
+            } else if (valor == limiteMax) {
+                publicar("LIMITE_MAX", "Leitura " + formatar(valor) + unidade
+                        + " atingiu o limite maximo (" + formatar(limiteMax) + unidade + ")");
             } else if (valor > limiteMax) {
                 publicar("ALERTA_MAX", "Leitura " + formatar(valor) + unidade
-                        + " acima do maximo (" + formatar(limiteMax) + unidade + ")");
+                        + " ultrapassou o limite maximo (" + formatar(limiteMax) + unidade + ")");
             }
         } catch (JMSException ex) {
             log("ERRO ao publicar mensagem: " + ex.getMessage());
